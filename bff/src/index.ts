@@ -1,8 +1,9 @@
-import Fastify from "fastify";
-import cookie from "@fastify/cookie";
-import cors from "@fastify/cors";
+import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { getCookie, setCookie } from "hono/cookie";
 import { Issuer, generators, type TokenSet } from "openid-client";
 import { randomUUID } from "node:crypto";
+import { serve } from "@hono/node-server";
 
 type Session = {
   accessToken: string;
@@ -24,7 +25,6 @@ const {
   REDIRECT_URI,
   FRONTEND_URL,
   API_BASE_URL,
-  COOKIE_SECRET,
   SESSION_COOKIE_NAME = "bff_session",
 } = process.env;
 
@@ -41,7 +41,6 @@ const clientSecret = requireEnv("CLIENT_SECRET", CLIENT_SECRET);
 const redirectUri = requireEnv("REDIRECT_URI", REDIRECT_URI);
 const frontendUrl = requireEnv("FRONTEND_URL", FRONTEND_URL);
 const apiBaseUrl = requireEnv("API_BASE_URL", API_BASE_URL);
-const cookieSecret = requireEnv("COOKIE_SECRET", COOKIE_SECRET);
 
 const sessions = new Map<string, Session>();
 const loginStates = new Map<string, LoginState>();
@@ -54,19 +53,17 @@ const client = new issuer.Client({
   response_types: ["code"],
 });
 
-const app = Fastify({ logger: true });
+const app = new Hono();
 
-await app.register(cookie, {
-  secret: cookieSecret,
-});
+app.use(
+  "*",
+  cors({
+    origin: frontendUrl,
+    credentials: true,
+  })
+);
 
-await app.register(cors, {
-  origin: frontendUrl,
-  credentials: true,
-});
-
-function getSession(request: typeof app.request) {
-  const sessionId = request.cookies[SESSION_COOKIE_NAME];
+function getSession(sessionId?: string) {
   if (!sessionId) {
     return null;
   }
@@ -85,7 +82,7 @@ function tokenClaims(tokenSet: TokenSet) {
   return tokenSet.claims();
 }
 
-app.get("/auth/login", async (_request, reply) => {
+app.get("/auth/login", (c) => {
   const state = generators.state();
   const nonce = generators.nonce();
   const codeVerifier = generators.codeVerifier();
@@ -106,18 +103,19 @@ app.get("/auth/login", async (_request, reply) => {
     redirect_uri: redirectUri,
   });
 
-  return reply.redirect(authorizationUrl);
+  return c.redirect(authorizationUrl);
 });
 
-app.get("/auth/callback", async (request, reply) => {
-  const { code, state } = request.query as { code?: string; state?: string };
+app.get("/auth/callback", async (c) => {
+  const code = c.req.query("code");
+  const state = c.req.query("state");
   if (!code || !state) {
-    return reply.status(400).send({ error: "Missing code or state" });
+    return c.json({ error: "Missing code or state" }, 400);
   }
 
   const loginState = loginStates.get(state);
   if (!loginState) {
-    return reply.status(400).send({ error: "Invalid state" });
+    return c.json({ error: "Invalid state" }, 400);
   }
   loginStates.delete(state);
 
@@ -138,69 +136,66 @@ app.get("/auth/callback", async (request, reply) => {
     claims: tokenClaims(tokenSet),
   });
 
-  reply.setCookie(SESSION_COOKIE_NAME, sessionId, {
+  setCookie(c, SESSION_COOKIE_NAME, sessionId, {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "Lax",
     path: "/",
   });
 
-  return reply.redirect(frontendUrl);
+  return c.redirect(frontendUrl);
 });
 
-app.get("/me", async (request, reply) => {
-  const data = getSession(request);
+app.get("/me", (c) => {
+  const sessionId = getCookie(c, SESSION_COOKIE_NAME);
+  const data = getSession(sessionId);
   if (!data) {
-    return reply.status(401).send({ error: "Unauthenticated" });
+    return c.json({ error: "Unauthenticated" }, 401);
   }
-  return reply.send({ user: data.session.claims });
+  return c.json({ user: data.session.claims });
 });
 
-app.all("/api/*", async (request, reply) => {
-  const urlPath = request.url.replace(/^\/api/, "");
+app.all("/api/*", async (c) => {
+  const urlPath = c.req.path.replace(/^\/api/, "");
   const targetUrl = new URL(urlPath, apiBaseUrl).toString();
 
   const isHealthCheck = urlPath === "/health";
-  const sessionData = getSession(request);
+  const sessionId = getCookie(c, SESSION_COOKIE_NAME);
+  const sessionData = getSession(sessionId);
   if (!isHealthCheck && !sessionData) {
-    return reply.status(401).send({ error: "Unauthenticated" });
+    return c.json({ error: "Unauthenticated" }, 401);
   }
 
   const headers = new Headers();
-  for (const [key, value] of Object.entries(request.headers)) {
-    if (!value) continue;
-    if (["host", "cookie", "content-length"].includes(key)) continue;
-    headers.set(key, Array.isArray(value) ? value.join(",") : value);
-  }
+  c.req.raw.headers.forEach((value, key) => {
+    if (["host", "cookie", "content-length"].includes(key)) return;
+    headers.set(key, value);
+  });
   if (sessionData?.session.accessToken) {
     headers.set("authorization", `Bearer ${sessionData.session.accessToken}`);
   }
 
-  let body: string | undefined;
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    if (typeof request.body === "string") {
-      body = request.body;
-    } else if (request.body) {
-      body = JSON.stringify(request.body);
-      if (!headers.has("content-type")) {
-        headers.set("content-type", "application/json");
-      }
-    }
-  }
+  const method = c.req.method;
+  const needsBody = method !== "GET" && method !== "HEAD";
+  const body = needsBody ? await c.req.arrayBuffer() : undefined;
 
   const response = await fetch(targetUrl, {
-    method: request.method,
+    method,
     headers,
-    body,
+    body: needsBody ? body : undefined,
   });
 
-  const responseText = await response.text();
+  const responseBody = await response.text();
   const contentType = response.headers.get("content-type");
   if (contentType) {
-    reply.header("content-type", contentType);
+    c.header("content-type", contentType);
   }
-  return reply.status(response.status).send(responseText);
+  return c.body(responseBody, response.status);
 });
 
-app.get("/health", async () => ({ status: "ok" }));
+app.get("/health", (c) => c.json({ status: "ok" }));
 
-await app.listen({ port: Number(PORT), host: "0.0.0.0" });
+serve({
+  fetch: app.fetch,
+  port: Number(PORT),
+  hostname: "0.0.0.0",
+});

@@ -5,8 +5,8 @@ Minimal TypeScript PoC for browser SSO (OIDC) + Passkeys (WebAuthn) using a BFF 
 ## Components
 - **Keycloak**: OIDC provider + WebAuthn (passkeys).
 - **Frontend**: Next.js UI that only calls the BFF.
-- **BFF**: Fastify server handling OAuth2 Authorization Code + PKCE and holding tokens in session.
-- **API**: Fastify server validating JWTs.
+- **BFF**: Hono server handling OAuth2 Authorization Code + PKCE and holding tokens in session.
+- **API**: Hono server validating JWTs.
 
 ## Configuration Summary
 - Realm: `poc`

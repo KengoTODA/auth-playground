@@ -129,9 +129,15 @@ app.get("/auth/callback", async (c) => {
     }
   );
 
+  if (!tokenSet.access_token) {
+    return reply
+      .status(502)
+      .send({ error: "Authentication failed: missing access token from identity provider" });
+  }
+
   const sessionId = randomUUID();
   sessions.set(sessionId, {
-    accessToken: tokenSet.access_token ?? "",
+    accessToken: tokenSet.access_token,
     expiresAt: tokenSet.expires_at,
     claims: tokenClaims(tokenSet),
   });
@@ -156,8 +162,19 @@ app.get("/me", (c) => {
 
 app.all("/api/*", async (c) => {
   const urlPath = c.req.path.replace(/^\/api/, "");
-  const targetUrl = new URL(urlPath, apiBaseUrl).toString();
 
+  // Validate and normalize the proxied path to prevent SSRF via protocol-relative or absolute URLs.
+  if (
+    urlPath.startsWith("//") || // protocol-relative URL
+    urlPath.includes("..") || // path traversal attempt
+    /^[a-zA-Z][a-zA-Z0-9+.+-]*:/.test(urlPath) // absolute URL with scheme
+  ) {
+    return reply.status(400).send({ error: "Invalid API path" });
+  }
+
+  // Ensure the proxy target cannot escape the configured API origin.
+  const apiOrigin = new URL(apiBaseUrl).origin;
+  const targetUrl = new URL(urlPath, apiOrigin).toString();
   const isHealthCheck = urlPath === "/health";
   const sessionId = getCookie(c, SESSION_COOKIE_NAME);
   const sessionData = getSession(sessionId);

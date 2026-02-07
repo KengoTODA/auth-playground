@@ -5,7 +5,7 @@ on:
   pull_request:
 
 jobs:
-  typecheck:
+  build:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -17,13 +17,17 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: ${{ matrix.app }}/package-lock.json
 
       - name: Install dependencies
         working-directory: ${{ matrix.app }}
-        run: npm install
+        run: npm ci
+
+      - name: Build
+        working-directory: ${{ matrix.app }}
+        run: npm run build --if-present
 
       - name: Typecheck
         working-directory: ${{ matrix.app }}

@@ -15,9 +15,15 @@ Minimal TypeScript PoC for browser SSO (OIDC) + Passkeys (WebAuthn) using a BFF 
 - Redirect URI: `http://localhost:4000/auth/callback`
 
 ## Quick Start
-```bash
-docker compose up --build
-```
+1. Create `.env` from the example and set a unique client secret:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Start the stack:
+   ```bash
+   docker compose up --build
+   ```
 
 Open the app at <http://localhost:3000>.
 

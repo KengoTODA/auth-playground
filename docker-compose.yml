@@ -17,7 +17,12 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.3
-    command: ["start-dev", "--import-realm"]
+    command:
+      - sh
+      - -c
+      - |
+        sed "s|__BFF_CLIENT_SECRET__|$${BFF_CLIENT_SECRET}|g" /opt/keycloak/data/import/realm-export.template.json > /opt/keycloak/data/import/realm-export.json
+        /opt/keycloak/bin/kc.sh start-dev --import-realm
     depends_on:
       postgres:
         condition: service_healthy
@@ -29,10 +34,11 @@ services:
       KC_DB_PASSWORD: keycloak
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
+      BFF_CLIENT_SECRET: ${BFF_CLIENT_SECRET:?set BFF_CLIENT_SECRET in .env}
     ports:
       - "8080:8080"
     volumes:
-      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - ./keycloak/realm-export.template.json:/opt/keycloak/data/import/realm-export.template.json:ro
 
   bff:
     build:
@@ -41,7 +47,7 @@ services:
       PORT: 4000
       OIDC_ISSUER: http://keycloak:8080/realms/poc
       CLIENT_ID: bff
-      CLIENT_SECRET: bff-secret
+      CLIENT_SECRET: ${BFF_CLIENT_SECRET:?set BFF_CLIENT_SECRET in .env}
       REDIRECT_URI: http://localhost:4000/auth/callback
       FRONTEND_URL: http://localhost:3000
       API_BASE_URL: http://api:5000

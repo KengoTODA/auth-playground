@@ -130,9 +130,10 @@ app.get("/auth/callback", async (c) => {
   );
 
   if (!tokenSet.access_token) {
-    return reply
-      .status(502)
-      .send({ error: "Authentication failed: missing access token from identity provider" });
+    return c.json(
+      { error: "Authentication failed: missing access token from identity provider" },
+      502
+    );
   }
 
   const sessionId = randomUUID();
@@ -169,7 +170,7 @@ app.all("/api/*", async (c) => {
     urlPath.includes("..") || // path traversal attempt
     /^[a-zA-Z][a-zA-Z0-9+.+-]*:/.test(urlPath) // absolute URL with scheme
   ) {
-    return reply.status(400).send({ error: "Invalid API path" });
+    return c.json({ error: "Invalid API path" }, 400);
   }
 
   // Ensure the proxy target cannot escape the configured API origin.
@@ -203,10 +204,8 @@ app.all("/api/*", async (c) => {
 
   const responseBody = await response.text();
   const contentType = response.headers.get("content-type");
-  if (contentType) {
-    c.header("content-type", contentType);
-  }
-  return c.body(responseBody, response.status);
+  const responseHeaders = contentType ? { "content-type": contentType } : undefined;
+  return new Response(responseBody, { status: response.status, headers: responseHeaders });
 });
 
 app.get("/health", (c) => c.json({ status: "ok" }));
